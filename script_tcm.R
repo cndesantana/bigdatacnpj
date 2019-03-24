@@ -17,50 +17,38 @@ config$`sparklyr.shell.executor-memory` <- "4G"
 config$`spark.yarn.executor.memoryOverhead` <- "512"
 
 #As I am working in a local machine, I connect in a "local" spark instance
-filename <- "data/cnpj/airline.csv"
+filename <- "data/cnpj/bd_tcm_pessoal.csv"
+#filename <- "data/airlines/airline.csv"
 sc = spark_connect(master = "local", config = config)
-air = spark_read_csv(sc, name = "air", path = filename)
-
 tic = Sys.time()
-mean_dep_delay = air %>%
-  group_by(Year, Month, DayofMonth) %>%
-  summarise(mean_delay = mean(DepDelay,na.rm=TRUE))
+cnpj = spark_read_csv(sc, name = "cnpj", path = filename, delimiter = ";",header=FALSE)
+names(cnpj) <- c("data","ano","mes","cod_municipio","nm_municipio","cod_entidade","nm_entidade","nome","matricula","data_admissao","tipo_servidor","cargo","salario_base","salario_vantagens","salario_gratificacao","decimo_terceiro","carga_horaria","area_atuacao")
 (toc = Sys.time() - tic)
 
-# Source:   lazy query [?? x 4]
-# Database: spark_connection
-# Groups:   YEAR, MONTH
-#   YEAR MONTH DAY_OF_MONTH mean_delay
-#  <int> <int>        <int>      <dbl>
-#1  1987    10            9       6.71
-#2  1987    10           10       3.72
-#3  1987    10           12       4.95
-#4  1987    10           14       4.53
-#5  1987    10           23       6.48
-#6  1987    10           29       5.77
-#Warning messages:
-#1: Missing values are always removed in SQL.
-#Use `AVG(x, na.rm = TRUE)` to silence this warning
-#2: Missing values are always removed in SQL.
-#Use `AVG(x, na.rm = TRUE)` to silence this warning
 
-#Surprisingly, this takes around 5 minutes to print? Why? Look at the class of mean_dep_delay: it’s a lazy query that only gets evaluated once I need it. Look at the first line; lazy query [?? x 4]. This means that I don’t even know how many rows are in mean_dep_delay! The contents of mean_dep_delay only get computed once I explicitly ask for them. I do so with the collect() function, which transfers the Spark object into R’s memory:
-
-#saveRDS(mean_dep_delay, "outputs/cnpj/mean_dep_delay.rds")
-#mean_dep_delay <- readRDS("mean_dep_delay.rds")
-
+#### Calculate the mean monthly "salario_base" per municipality for the whole period
 tic = Sys.time()
-r_mean_dep_delay = collect(mean_dep_delay)
+mean_salario_base = cnpj %>%
+  group_by(ano, mes, nm_municipio) %>%
+  summarise(mean_salario_base = mean(salario_base,na.rm=TRUE))
 (toc = Sys.time() - tic)
 
+#### Collect the data from Spark to R
+tic = Sys.time()
+r_mean_salario_base = collect(mean_salario_base)
+(toc = Sys.time() - tic)
+
+saveRDS(r_mean_salario_base,file="r_mean_salariobase.RDS")
 library(lubridate)
 
-dep_delay =  r_mean_dep_delay %>%
-  arrange(Year, Month, DayofMonth) %>%
-  mutate(date = ymd(paste(Year, Month, DayofMonth, sep = "-")))
+#### Comparing two cities (Salvador and Lauro de Freitas)
+dep_salario_base =  r_mean_salario_base %>%
+  filter(toupper(nm_municipio) %in% c("LAURO DE FREITAS","SALVADOR")) %>%
+  arrange(ano, mes) %>%
+  mutate(date = ymd(paste(ano, mes, "01", sep = "-")))
 
-p1 <- ggplot(dep_delay, aes(date, mean_delay)) + geom_smooth() + xlab("Date") + ylab("Mean delay (min)") + ggtitle("Airlines in the US -- Mean delay")
-png("ts_MeanDelay.png",width=3200,height=1800,res=300)
+p1 <- ggplot(dep_salario_base, aes(date, mean_salario_base, col = nm_municipio)) + geom_smooth() + xlab("Data") + ylab("Salario Base medio") + ggtitle("Salario Base medio")
+png("ts_SalarioMedio.png",width=3200,height=1800,res=300)
 print(p1)
 dev.off()
 
